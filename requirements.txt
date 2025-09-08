@@ -1,0 +1,14 @@
+opencv-python-headless
+streamlit>=1.37
+pandas>=2.1
+numpy>=1.25
+pillow>=10.3
+matplotlib>=3.8
+html2image>=2.0
+open-clip-torch>=2.24.0
+torch>=2.2; platform_system != "Darwin"
+torch==2.2.2; platform_system == "Darwin" and platform_machine == "arm64"
+python-barcode[images]>=0.15.1
+
+
+
