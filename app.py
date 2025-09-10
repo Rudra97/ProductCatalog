@@ -150,9 +150,11 @@ with tab1:
                             # Display product image
                             if img_path.exists():
                                 try:
-                                    img = Image.open(img_path)
-                                    img = img.resize((200, 200))
-                                    col.image(img, width=150)
+                                    @st.cache_data
+                                    def load_image(path):
+                                        img = Image.open(path)
+                                        return img.resize((200, 200))
+                                    col.image(load_image(img_path), width=150)
                                 except Exception as e:
                                     col.image("https://via.placeholder.com/150x150?text=No+Image", width=150)
                             else:
@@ -174,7 +176,7 @@ with tab1:
                                         "cost_price": cost_lookup.get(item_name, 0.0)
                                     }
                                     st.success(f"Added {qty} × {item_name}")
-                                    st.rerun()
+
                             else:
                                 st.error("Out of stock")
 
@@ -352,10 +354,22 @@ with tab1:
 
                 try:
                     output_dir.mkdir(exist_ok=True)
-                    hti = Html2Image(output_path=str(output_dir))
-                    png_filename = now.strftime(f"{billed_to}_%Y%m%d_%H%M%S.png")
-                    png_path = output_dir / png_filename
-                    hti.screenshot(html_file=str(html_path), save_as=png_filename)
+                    try:
+                        hti = Html2Image(output_path=str(output_dir))
+                        png_filename = now.strftime(f"{billed_to}_%Y%m%d_%H%M%S.png")
+                        png_path = output_dir / png_filename
+
+                        result = hti.screenshot(
+                            html_file=str(html_path.resolve()),
+                            save_as=png_filename
+                        )
+
+                        if not png_path.exists():
+                            st.warning("⚠️ PNG was not saved. Check if Chrome/Firefox is installed and accessible.")
+                        else:
+                            st.success(f"✅ Invoice image saved: {png_path}")
+                    except Exception as ex:
+                        st.error(f"Error creating PNG: {ex}")
 
                     with open(png_path, "rb") as img_f:
                         st.download_button(
@@ -388,7 +402,7 @@ with tab1:
                         catalog_df.at[idx[0], "in_stock"] = max(int(catalog_df.at[idx[0], "in_stock"]) - rec["qty"], 0)
 
                 save_catalog_df(catalog_df, CATALOG_CSV)
-                load_catalog_df.clear()
+                st.cache_data.clear()
                 st.success("Invoice saved successfully!")
                 st.session_state.cart.clear()
                 st.rerun()
