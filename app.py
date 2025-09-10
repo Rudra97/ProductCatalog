@@ -18,7 +18,7 @@ from difflib import SequenceMatcher
 CATALOG_DIR = Path("catalog")
 CATALOG_CSV = CATALOG_DIR / "catalog.csv"
 BILL_LOG_PATH = Path("generated_bills/billing_log.csv")
-ANALYTICS_PASSWORD = "admin123"  # Change this to your preferred password
+ANALYTICS_PASSWORD = "Rahul@Vijay"  # Change this to your preferred password
 
 st.set_page_config(page_title="Product Catalog Billing System", page_icon="🛒", layout="wide")
 tab1, tab2 = st.tabs(["🧾 Billing", "📊 Analytics"])
@@ -31,6 +31,10 @@ if "auth_error" not in st.session_state:
 
 
 # ---------------------- Catalog Loading ----------------------
+def save_catalog_df(df: pd.DataFrame, csv_path: Path) -> None:
+    cols = ["item_name", "price", "cost_price", "category", "in_stock", "image_path"]
+    df[cols].to_csv(csv_path, index=False)
+
 @st.cache_data(show_spinner=False)
 def load_catalog_df(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
@@ -49,7 +53,8 @@ def load_catalog_df(csv_path: Path) -> pd.DataFrame:
     if "category" not in df.columns:
         df["category"] = "Uncategorized"
     if "in_stock" not in df.columns:
-        df["in_stock"] = True
+        df["in_stock"] = 0
+    df["in_stock"] = pd.to_numeric(df["in_stock"], errors="coerce").fillna(0).astype(int)
     if "cost_price" not in df.columns:
         df["cost_price"] = df["price"] * 0.6  # Default to 60% of price
 
@@ -65,9 +70,9 @@ def load_catalog_df(csv_path: Path) -> pd.DataFrame:
     df["cost_price"] = pd.to_numeric(df["cost_price"], errors="coerce").fillna(df["price"] * 0.6)
 
     # Handle in_stock column
-    df["in_stock"] = df["in_stock"].astype(str).str.lower().replace(
-        {"true": True, "false": False, "yes": True, "no": False})
-    df["in_stock"] = df["in_stock"].fillna(True).astype(bool)
+    if "in_stock" not in df.columns:
+        df["in_stock"] = 0
+    df["in_stock"] = pd.to_numeric(df["in_stock"], errors="coerce").fillna(0).astype(int)
 
     return df
 
@@ -75,6 +80,8 @@ def load_catalog_df(csv_path: Path) -> pd.DataFrame:
 # ---------------------- Billing App ----------------------
 with tab1:
     st.title("🛒 Product Catalog Billing System")
+    if "cart" not in st.session_state or not isinstance(st.session_state.cart, dict):
+        st.session_state.cart = {}
 
     catalog_df = load_catalog_df(CATALOG_CSV)
     if catalog_df.empty:
@@ -90,8 +97,18 @@ with tab1:
         # Get unique categories
         categories = ["All"] + sorted(catalog_df["category"].unique().tolist())
 
-    if "cart" not in st.session_state:
-        st.session_state.cart: Dict[str, Dict[str, float | int]] = {}
+        with st.sidebar:
+            st.subheader("🛒 Your Cart")
+
+            cart = st.session_state.get("cart", {})
+
+            if cart and isinstance(cart, dict) and any(cart.values()):
+                for item, rec in cart.items():
+                    st.write(f"{item} x {rec['qty']} = ₹{rec['qty'] * rec['price']:.2f}")
+                total = sum(rec["price"] * rec["qty"] for rec in cart.values())
+                st.write(f"**Total:** ₹{total:,.2f}")
+            else:
+                st.info("Cart is empty.")
 
     # Search and filter options
     col1, col2, col3 = st.columns([2, 1, 1])
@@ -123,8 +140,9 @@ with tab1:
                 if i + j < len(items):
                     item_name = items[i + j]
                     img_path = CATALOG_DIR / image_lookup[item_name]
-                    price = price_lookup[item_name]
-                    in_stock = stock_lookup[item_name]
+                    row = catalog_df.loc[catalog_df["item_name"] == item_name].iloc[0]
+                    price = float(row["price"])
+                    in_stock_qty = int(row["in_stock"])
 
                     with col:
                         # Create a card-like container
@@ -145,32 +163,21 @@ with tab1:
                             st.write(f"**₹{price:.2f}**")
 
                             # Stock status
-                            if in_stock:
-                                st.success("In stock")
+                            # Stock status + Add to Cart
+                            if in_stock_qty > 0:
+                                st.success(f"In stock: {in_stock_qty}")
+                                qty = st.number_input("Qty", 0, in_stock_qty, 0, key=f"qty_{item_name}")
+                                if qty > 0 and st.button("Add to Cart", key=f"add_{item_name}"):
+                                    st.session_state.cart[item_name] = {
+                                        "price": price,
+                                        "qty": qty,
+                                        "cost_price": cost_lookup.get(item_name, 0.0)
+                                    }
+                                    st.success(f"Added {qty} × {item_name}")
+                                    st.rerun()
                             else:
                                 st.error("Out of stock")
 
-                            # Add to cart controls
-                            if in_stock:
-                                # Use a shorter label for the quantity input
-                                qty = st.number_input(
-                                    "Quantity",
-                                    min_value=0,
-                                    max_value=100,
-                                    value=0,
-                                    key=f"qty_{item_name}"
-                                )
-
-                                if qty > 0 and st.button(f"Add to Cart", key=f"add_{item_name}"):
-                                    cost_price = cost_lookup.get(item_name, 0.0)
-                                    st.session_state.cart[item_name] = {
-                                        "price": float(price),
-                                        "qty": int(qty),
-                                        "cost_price": float(cost_price)
-                                    }
-                                    st.success(f"Added {qty} × {item_name}")
-                            else:
-                                st.button("Out of Stock", disabled=True)
                         st.markdown("---")  # Divider between products
 
     st.divider()
@@ -189,7 +196,8 @@ with tab1:
 
         # Display the table
         df = pd.DataFrame(table_data)
-        st.dataframe(df, use_container_width=True)
+        df.insert(0, "S.No", range(1, len(df) + 1))
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
         # Add + and - buttons for each item
         for name, rec in st.session_state.cart.items():
@@ -205,8 +213,14 @@ with tab1:
                 st.text(f"Qty: {st.session_state.cart[name]['qty']}")
             with col3:
                 if st.button("➕", key=f"inc_{name}"):
-                    st.session_state.cart[name]["qty"] += 1
-                    st.rerun()
+                    stock_row = catalog_df.loc[catalog_df["item_name"] == name].iloc[0]
+                    stock_qty = int(stock_row["in_stock"])
+                    if st.session_state.cart[name]["qty"] < stock_qty:
+                        st.session_state.cart[name]["qty"] += 1
+                        st.rerun()
+                    else:
+                        st.warning("Reached available stock.")
+
             with col4:
                 new_price = st.number_input(
                     f"Price",
@@ -223,7 +237,14 @@ with tab1:
 
         st.metric("Total (Before Discount)", f"₹{grand_total:,.2f}")
 
-        discount_percent = st.slider("Apply Discount (%)", 0, 50, 0)
+        coupon_code = st.text_input("Enter Coupon Code")
+        valid_coupons = {
+            "DIWALI1010": 10,
+            "DIWALI1515": 15,
+            "DIWALI55": 5,
+        }
+
+        discount_percent = valid_coupons.get(coupon_code.upper(), 0)
         discount_amt = (grand_total * discount_percent) / 100.0
         final_total = grand_total - discount_amt
         if discount_percent > 0:
@@ -361,6 +382,13 @@ with tab1:
                     df_combined = log_df
                 df_combined.to_csv(BILL_LOG_PATH, index=False)
 
+                for name, rec in st.session_state.cart.items():
+                    idx = catalog_df.index[catalog_df["item_name"] == name]
+                    if len(idx) == 1:
+                        catalog_df.at[idx[0], "in_stock"] = max(int(catalog_df.at[idx[0], "in_stock"]) - rec["qty"], 0)
+
+                save_catalog_df(catalog_df, CATALOG_CSV)
+                load_catalog_df.clear()
                 st.success("Invoice saved successfully!")
                 st.session_state.cart.clear()
                 st.rerun()
